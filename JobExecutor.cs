@@ -36,26 +36,69 @@ namespace QlikOrchestration.Execution
 
             Console.WriteLine($"Executing job: {job.JobId}");
 
-            var executed = new HashSet<string>();
-
-            foreach (var step in job.Steps)
+            var executionOrder = GetExecutionOrder(job.Steps);
+            if (executionOrder == null)
             {
-                if (!string.IsNullOrEmpty(step.DependsOn) && !executed.Contains(step.DependsOn))
-                {
-                    Console.WriteLine($"Cannot run step {step.StepId} yet. Waiting for dependency: {step.DependsOn}");
-                    continue;
-                }
+                Console.WriteLine("Failed to build execution plan. Check for circular or missing dependencies.");
+                return;
+            }
 
+            foreach (var step in executionOrder)
+            {
                 Console.WriteLine($"Running step {step.StepId} of type {step.Type}");
                 foreach (var param in step.Parameters)
                 {
                     Console.WriteLine($"  {param.Key}: {param.Value}");
                 }
-
-                executed.Add(step.StepId);
             }
 
-            Console.WriteLine("Job execution finished (no retry/checkpoint yet).");
+            Console.WriteLine("Job execution finished.");
+        }
+
+        private List<JobStep> GetExecutionOrder(List<JobStep> steps)
+        {
+            var stepMap = steps.ToDictionary(s => s.StepId);
+            var visited = new HashSet<string>();
+            var visiting = new HashSet<string>();
+            var result = new List<JobStep>();
+
+            bool Dfs(string stepId)
+            {
+                if (visited.Contains(stepId))
+                    return true;
+                if (visiting.Contains(stepId))
+                    return false; // cycle detected
+
+                visiting.Add(stepId);
+                var step = stepMap[stepId];
+
+                if (!string.IsNullOrWhiteSpace(step.DependsOn))
+                {
+                    if (!stepMap.ContainsKey(step.DependsOn))
+                    {
+                        Console.WriteLine($"Missing dependency: {step.DependsOn}");
+                        return false;
+                    }
+                    if (!Dfs(step.DependsOn))
+                        return false;
+                }
+
+                visiting.Remove(stepId);
+                visited.Add(stepId);
+                result.Add(step);
+                return true;
+            }
+
+            foreach (var step in steps)
+            {
+                if (!visited.Contains(step.StepId))
+                {
+                    if (!Dfs(step.StepId))
+                        return null;
+                }
+            }
+
+            return result;
         }
     }
 }
