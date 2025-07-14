@@ -1,0 +1,22 @@
+using QlikOrchestration.Models;
+using System.Text.Json;
+
+// After config build in Main
+var jobFile = Path.Combine("Configs", "ReportJobs.json");
+if (!File.Exists(jobFile))
+{
+    Console.WriteLine("Job config file not found.");
+    return;
+}
+
+var json = File.ReadAllText(jobFile);
+var jobs = JsonSerializer.Deserialize<List<ReportJob>>(json);
+
+foreach (var job in jobs)
+{
+    Console.WriteLine($"JobId: {job.JobId}");
+    foreach (var step in job.Steps)
+    {
+        Console.WriteLine($"  StepId: {step.StepId}, Type: {step.Type}, DependsOn: {step.DependsOn}");
+    }
+}
