@@ -1,0 +1,33 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+
+namespace QlikOrchestration.Utils
+{
+    public class CheckpointManager
+    {
+        private readonly string _checkpointFile;
+
+        public CheckpointManager(string jobId, string checkpointDir)
+        {
+            Directory.CreateDirectory(checkpointDir);
+            _checkpointFile = Path.Combine(checkpointDir, $"{jobId}.json");
+        }
+
+        public HashSet<string> Load()
+        {
+            if (!File.Exists(_checkpointFile))
+                return new HashSet<string>();
+
+            var json = File.ReadAllText(_checkpointFile);
+            return JsonSerializer.Deserialize<HashSet<string>>(json) ?? new HashSet<string>();
+        }
+
+        public void Save(HashSet<string> completedSteps)
+        {
+            var json = JsonSerializer.Serialize(completedSteps, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_checkpointFile, json);
+        }
+    }
+}
