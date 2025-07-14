@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
+using QlikOrchestration.Execution;
 using System;
 using System.IO;
+using System.Linq;
 
 namespace QlikOrchestration
 {
@@ -15,13 +17,17 @@ namespace QlikOrchestration
                 .AddJsonFile("Configs/appsettings.json", optional: false)
                 .Build();
 
-            string logDir = config["LogDirectory"];
-            string checkpointDir = config["CheckpointDirectory"];
-            string retention = config["RetentionDays"];
+            string jobId = args.FirstOrDefault(a => a.StartsWith("--job="))?.Split("=")[1];
 
-            Console.WriteLine($"LogDirectory: {logDir}");
-            Console.WriteLine($"CheckpointDirectory: {checkpointDir}");
-            Console.WriteLine($"RetentionDays: {retention}");
+            if (string.IsNullOrWhiteSpace(jobId))
+            {
+                Console.WriteLine("Missing --job parameter.");
+                return;
+            }
+
+            var jobFilePath = Path.Combine("Configs", "ReportJobs.json");
+            var executor = new JobExecutor(jobFilePath);
+            executor.Execute(jobId);
         }
     }
 }
