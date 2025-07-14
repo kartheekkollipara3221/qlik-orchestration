@@ -1,0 +1,23 @@
+[
+  {
+    "JobId": "Daily_Bond_Report",
+    "Steps": [
+      {
+        "StepId": "RunQlikTask",
+        "Type": "QlikTask",
+        "DependsOn": null,
+        "Parameters": {
+          "TaskId": "abcd1234"
+        }
+      },
+      {
+        "StepId": "TriggerNPrinting",
+        "Type": "NPrinting",
+        "DependsOn": "RunQlikTask",
+        "Parameters": {
+          "ReportId": "xyz5678"
+        }
+      }
+    ]
+  }
+]
