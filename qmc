@@ -1,0 +1,45 @@
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Security.Cryptography.X509Certificates;
+using QlikOrchestration.Models;
+
+namespace QlikOrchestration.Execution
+{
+    public class QlikTaskRunner : IStepRunner
+    {
+        public bool CanHandle(string stepType) => stepType == "QlikTask";
+
+        public void Run(JobStep step)
+        {
+            if (!step.Parameters.TryGetValue("TaskId", out var taskId))
+                throw new Exception("Missing TaskId parameter for QlikTask");
+
+            if (!step.Parameters.TryGetValue("QrsUrl", out var qrsUrl))
+                throw new Exception("Missing QrsUrl parameter (e.g., https://qlik.company.com:4242)");
+
+            Console.WriteLine($"[QlikTask] Triggering QMC TaskId: {taskId}");
+
+            var certPath = step.Parameters["CertPath"];       // PFX file
+            var certPassword = step.Parameters["CertPassword"];
+
+            var handler = new HttpClientHandler();
+            var clientCert = new X509Certificate2(certPath, certPassword);
+            handler.ClientCertificates.Add(clientCert);
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+
+            using var client = new HttpClient(handler);
+            client.BaseAddress = new Uri(qrsUrl);
+            client.DefaultRequestHeaders.Add("X-Qlik-User", "UserDirectory=INTERNAL;UserId=sa_repository");
+
+            var response = client.PostAsync($"/qrs/task/{taskId}/start?xrfkey=123456789abcdefg", null).Result;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"Failed to trigger QMC task. Status: {response.StatusCode}. Body: {response.Content.ReadAsStringAsync().Result}");
+            }
+
+            Console.WriteLine($"[QlikTask] Task {taskId} triggered successfully.");
+        }
+    }
+}
