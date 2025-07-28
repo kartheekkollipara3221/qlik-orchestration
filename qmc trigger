@@ -1,0 +1,150 @@
+using QlikPOC.ConsoleApp.Models;
+using QlikPOC.ConsoleApp.Utils;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
+namespace QlikPOC.ConsoleApp;
+
+public class QmcTrigger
+{
+    private readonly QmcConfig _config;
+
+    public QmcTrigger(QmcConfig config)
+    {
+        _config = config;
+    }
+
+    public async Task TriggerWithSessionTrackingAsync()
+    {
+        var client = HttpClientFactoryWithCert.Create(_config.CertPath, _config.CertPassword);
+        var xrfKey = _config.XrfKey;
+
+        string sessionId = await StartTaskAndGetSessionIdAsync(client, xrfKey);
+        if (string.IsNullOrEmpty(sessionId) || sessionId == "00000000-0000-0000-0000-000000000000")
+        {
+            Console.WriteLine("Task did not start or session ID is invalid.");
+            return;
+        }
+
+        bool sessionEnded = await PollExecutionSessionAsync(client, sessionId, xrfKey);
+        if (sessionEnded)
+        {
+            await GetFinalExecutionResultAsync(client, sessionId, xrfKey);
+        }
+        else
+        {
+            Console.WriteLine("Timed out waiting for execution session to complete.");
+        }
+    }
+
+    private async Task<string> StartTaskAndGetSessionIdAsync(HttpClient client, string xrfKey)
+    {
+        var url = $"{_config.BaseUrl}/qrs/task/{_config.TaskId}/start/synchronous?xrfkey={xrfKey}";
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("X-Qlik-Xrfkey", xrfKey);
+        request.Headers.Add("X-Qlik-User", _config.QlikUser);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        Console.WriteLine("Triggering QMC task...");
+
+        var response = await client.SendAsync(request);
+        var content = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Console.WriteLine($"Start task failed: {response.StatusCode}");
+            Console.WriteLine(content);
+            return string.Empty;
+        }
+
+        using var doc = JsonDocument.Parse(content);
+        var sessionId = doc.RootElement.GetProperty("value").GetString();
+        Console.WriteLine($"Execution session ID: {sessionId}");
+        return sessionId!;
+    }
+
+    private async Task<bool> PollExecutionSessionAsync(HttpClient client, string sessionId, string xrfKey)
+    {
+        var maxAttempts = 30;
+        var delay = TimeSpan.FromSeconds(10);
+        var url = $"{_config.BaseUrl}/qrs/executionsession/{sessionId}?xrfkey={xrfKey}";
+
+        for (int i = 0; i < maxAttempts; i++)
+        {
+            await Task.Delay(delay);
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("X-Qlik-Xrfkey", xrfKey);
+            request.Headers.Add("X-Qlik-User", _config.QlikUser);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            var response = await client.SendAsync(request);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                Console.WriteLine($"Execution session ended (deleted by engine).");
+                return true;
+            }
+
+            var content = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"Attempt {i + 1}: Failed to poll execution session.");
+                continue;
+            }
+
+            using var doc = JsonDocument.Parse(content);
+            var status = doc.RootElement.GetProperty("status").GetString();
+            Console.WriteLine($"Attempt {i + 1}: Session status = {status}");
+        }
+
+        return false;
+    }
+
+    private async Task GetFinalExecutionResultAsync(HttpClient client, string sessionId, string xrfKey)
+    {
+        var filter = System.Web.HttpUtility.UrlEncode($"ExecutionId eq {sessionId}");
+        var url = $"{_config.BaseUrl}/qrs/executionresult?filter={filter}&xrfkey={xrfKey}";
+
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("X-Qlik-Xrfkey", xrfKey);
+        request.Headers.Add("X-Qlik-User", _config.QlikUser);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var response = await client.SendAsync(request);
+        var content = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Console.WriteLine($"Failed to get execution result: {response.StatusCode}");
+            Console.WriteLine(content);
+            return;
+        }
+
+        using var doc = JsonDocument.Parse(content);
+        var results = doc.RootElement;
+
+        if (results.GetArrayLength() == 0)
+        {
+            Console.WriteLine("No execution result returned.");
+            return;
+        }
+
+        var result = results[0];
+        var statusCode = result.GetProperty("status").GetInt32();
+        var statusText = StatusText(statusCode);
+
+        Console.WriteLine($"Final execution result: {statusText}");
+    }
+
+    private static string StatusText(int code) => code switch
+    {
+        0 => "Never Started",
+        1 => "Triggered",
+        2 => "Started",
+        3 => "Success",
+        4 => "Failed",
+        5 => "Aborted",
+        _ => $"Unknown({code})"
+    };
+}
