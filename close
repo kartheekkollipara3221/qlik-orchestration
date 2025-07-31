@@ -1,0 +1,66 @@
+using ClosedXML.Excel;
+using System.Data;
+using System.IO;
+using System.Linq;
+
+public void FillExcelFile(DataTable dt2, string fileName)
+{
+    ImpersonateUser util = new ImpersonateUser();
+    try
+    {
+        string impDomain = GetConfigValue("SPDomain").ToString();
+        string impUserId = GetConfigValue("SPUser").ToString();
+        string impPassword = OASAPI.GetConnectionStringbyID(GetConfigValue("OISServiceUrl"), GetConfigValue("SPUser")).ToString();
+
+        string[] selectedColumns = new[]
+        {
+            "AccountNumber", "FamilyCodeSelected", "RelationshipManager", "ReportType", "ReportFrequency", "Format",
+            "Delivery_Method", "Recipient", "MarketData", "DueDate", "AnnualFrequency", "Author", "Created",
+            "DisclosureTrackingId", "DisclosureExpiration"
+        };
+
+        // Create filtered DataTable
+        DataTable dt1 = new DataView(dt2).ToTable(false, selectedColumns);
+
+        if (util.impersonateValidUser(impUserId, impDomain, impPassword))
+        {
+            if (File.Exists(fileName))
+                File.Delete(fileName);
+
+            using (var workbook = new XLWorkbook())
+            {
+                string sheetName = !string.IsNullOrWhiteSpace(dt1.TableName) ? dt1.TableName : "Report Inventory";
+                var worksheet = workbook.Worksheets.Add(sheetName);
+
+                // Add headers
+                for (int i = 0; i < dt1.Columns.Count; i++)
+                {
+                    string displayName = GetFieldDisplayName(dt1.Columns[i].ColumnName);
+                    worksheet.Cell(1, i + 1).Value = displayName;
+                }
+
+                // Add rows
+                for (int rowIdx = 0; rowIdx < dt1.Rows.Count; rowIdx++)
+                {
+                    for (int colIdx = 0; colIdx < dt1.Columns.Count; colIdx++)
+                    {
+                        object value = dt1.Rows[rowIdx][colIdx];
+                        worksheet.Cell(rowIdx + 2, colIdx + 1).Value = value ?? string.Empty;
+                    }
+                }
+
+                worksheet.Columns().AdjustToContents();
+                workbook.SaveAs(fileName);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        LogExceptiontoEventViewer(ex.ToString(), "FillExcelFile");
+        throw;
+    }
+    finally
+    {
+        util.undoImpersonation();
+    }
+}
